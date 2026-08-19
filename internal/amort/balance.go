@@ -78,6 +78,10 @@ func FinalBalance(periods []Period) int64 {
 // and the balance zeroes.
 //
 // For r = 0 this reduces to principal = payment (remainder in the last period).
+//
+// Returns an error if the payment does not cover the first period's interest
+// (payment ≤ round(outstanding × r)): such a payment would make principal go
+// negative, so the schedule cannot amortize and is rejected rather than built.
 func BuildFixedPayment(in ScheduleInput, payment int64) ([]Period, error) {
 	if in.Periods <= 0 {
 		return nil, fmt.Errorf("amort: periods must be > 0, got %d", in.Periods)
@@ -90,6 +94,16 @@ func BuildFixedPayment(in ScheduleInput, payment int64) ([]Period, error) {
 	}
 	if payment <= 0 {
 		return nil, fmt.Errorf("amort: payment must be > 0 for outstanding %d", in.Outstanding)
+	}
+	// Negative-amortization guard: the fixed payment must cover the first
+	// period's interest, otherwise principal = payment − interest goes negative
+	// and the balance grows instead of shrinking. Since interest is charged on a
+	// non-increasing balance, the first period carries the most interest, so
+	// covering it guarantees every period does. Mirrors the guard in
+	// buildEqualInstallment.
+	firstInterest := domain.MulRateMicro(in.Outstanding, in.PeriodicRateMicro)
+	if payment <= firstInterest {
+		return nil, fmt.Errorf("amort: payment %d does not cover first interest %d (rate too high for term)", payment, firstInterest)
 	}
 	result := make([]Period, in.Periods)
 	balance := in.Outstanding
